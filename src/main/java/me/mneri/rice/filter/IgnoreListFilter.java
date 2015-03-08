@@ -21,19 +21,14 @@ package me.mneri.rice.filter;
 import java.util.HashSet;
 
 import me.mneri.rice.Message;
-import me.mneri.rice.text.CaseMapping;
-import me.mneri.rice.text.TextUtils;
+
+//TODO: Connection's case mapping should be taken into account
 
 public class IgnoreListFilter implements Filter {
-	private CaseMapping mMapping;
 	private HashSet<String> mNicks = new HashSet<>();
 
-	public IgnoreListFilter(CaseMapping mapping) {
-		mMapping = mapping;
-	}
-
 	public void add(String nick) {
-
+		mNicks.add(nick);
 	}
 
 	@Override
@@ -42,6 +37,6 @@ public class IgnoreListFilter implements Filter {
 	}
 
 	public void remove(String nick) {
-
+		mNicks.remove(nick);
 	}
 }
