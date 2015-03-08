@@ -4,9 +4,9 @@ import me.mneri.rice.Message;
 
 import java.util.HashMap;
 
-public class FloodFilter implements Filter {
+public class InboundFloodFilter implements Filter {
 	private static final long TIME_PENALTY_MILLIS = 2000;
-	private static final long PENALTY_WINDOW_MILLIS = 50000;
+	private static final long PENALTY_WINDOW_MILLIS = 20000;
 
 	private HashMap<String, Long> mMessageTimers = new HashMap<>();
 

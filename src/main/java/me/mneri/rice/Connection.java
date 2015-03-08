@@ -44,6 +44,8 @@ import me.mneri.rice.ctcp.CTCP;
 import me.mneri.rice.dcc.DCC;
 import me.mneri.rice.event.Event;
 import me.mneri.rice.event.EventEmitter;
+import me.mneri.rice.filter.Filter;
+import me.mneri.rice.filter.IgnoreFilter;
 import me.mneri.rice.flood.FloodController;
 import me.mneri.rice.flood.StandardFloodController;
 import me.mneri.rice.store.MemoryStoreFactory;
@@ -88,11 +90,12 @@ public class Connection extends EventEmitter {
 	private Charset mEncoding;
 	private HashMap<String, Object> mExtras;
 	private StoreFactory<Message> mFactory;
+	private ArrayList<Filter> mFilters = new ArrayList<>();
 	private FloodController mFloodController;
 	private String mHost;
 	private Set<String> mHostCapabilities = new HashSet<>();
 	private String mHostIrcdVersion;
-	private Set<String> mIgnores;
+	private IgnoreFilter mIgnoreFilter = new IgnoreFilter();
 	private boolean mIsupportCompilant;
 	private InputThread mInputThread;
 	private String mLoginMode;
@@ -126,6 +129,7 @@ public class Connection extends EventEmitter {
 		private Charset mEncoding;
 		private HashMap<String, Object> mExtras = new HashMap<>();
 		private StoreFactory<Message> mFactory;
+		private ArrayList<Filter> mFilters = new ArrayList<>();
 		private FloodController mFloodController;
 		private String mHost;
 		private HashSet<String> mIgnores = new HashSet<>();
@@ -180,7 +184,6 @@ public class Connection extends EventEmitter {
 			connection.mFactory = (mFactory != null ? mFactory : new MemoryStoreFactory<Message>());
 			connection.mFloodController = (mFloodController != null ? mFloodController : new StandardFloodController());
 			connection.mHost = mHost;
-			connection.mIgnores = mIgnores;
 			connection.mLoginMode = (!TextUtils.isEmpty(mLoginMode) ? mLoginMode : "8");
 			connection.mWantedNick = mNick;
 			connection.mPass = mPass;
@@ -189,6 +192,10 @@ public class Connection extends EventEmitter {
 			connection.mSecure = mSecure;
 			connection.mSoTimeout = (mSoTimeout > 0 ? mSoTimeout : DEFAULT_SOCKET_TIMEOUT);
 			connection.mUser = mUser;
+			
+			connection.mIgnoreFilter.add(mIgnores);
+			connection.mFilters.add(connection.mIgnoreFilter);
+			connection.mFilters.addAll(mFilters);
 
 			return connection;
 		}
@@ -210,6 +217,11 @@ public class Connection extends EventEmitter {
 
 		public Builder extra(String key, Object value) {
 			mExtras.put(key, value);
+			return this;
+		}
+
+		public Builder filter(Filter filter) {
+			mFilters.add(filter);
 			return this;
 		}
 
@@ -289,8 +301,12 @@ public class Connection extends EventEmitter {
 		public void onLine(String line) {
 			Message message = Message.from(line);
 
-			if (!isIgnored(message.nick))
-				emit(new Event(message.command, message));
+			for (Filter filter : mFilters) {
+				if (filter.doFilter(message))
+					return;
+			}
+
+			emit(new Event(message.command, message));
 		}
 	}
 
@@ -384,7 +400,7 @@ public class Connection extends EventEmitter {
 	}
 
 	public Set<String> getIgnores() {
-		return mIgnores;
+		return mIgnoreFilter.get();
 	}
 
 	public HashMap<Character, Boolean> getMode() {
@@ -421,7 +437,7 @@ public class Connection extends EventEmitter {
 	}
 
 	public void ignore(String nick) {
-		mIgnores.add(nick);
+		mIgnoreFilter.add(nick);
 	}
 
 	public void info() {
@@ -844,7 +860,7 @@ public class Connection extends EventEmitter {
 	}
 
 	public boolean isIgnored(String nick) {
-		return mIgnores.contains(nick);
+		return mIgnoreFilter.contains(nick);
 	}
 
 	public boolean isIsupportCompilant() {
@@ -928,7 +944,7 @@ public class Connection extends EventEmitter {
 	}
 
 	public void mind(String user) {
-		mIgnores.remove(user);
+		mIgnoreFilter.remove(user);
 	}
 
 	public void mode(String nickOrChannel, String modeSpecs) {
