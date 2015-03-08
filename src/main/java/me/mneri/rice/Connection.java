@@ -149,6 +149,11 @@ public class Connection extends EventEmitter {
 			return this;
 		}
 
+		public Builder autoJoin(String... channels) {
+			autoJoin(Arrays.asList(channels));
+			return this;
+		}
+
 		public Builder autoNickChange(boolean auto) {
 			mAutoNickChange = auto;
 			return this;
@@ -218,13 +223,13 @@ public class Connection extends EventEmitter {
 			return this;
 		}
 
-		public Builder ignore(List<String> user) {
-			mIgnores.addAll(user);
+		public Builder ignore(List<String> users) {
+			mIgnores.addAll(users);
 			return this;
 		}
 
-		public Builder ignore(String user) {
-			mIgnores.add(user);
+		public Builder ignore(String... users) {
+			ignore(Arrays.asList(users));
 			return this;
 		}
 
