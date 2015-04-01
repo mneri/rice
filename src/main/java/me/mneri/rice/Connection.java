@@ -472,18 +472,17 @@ public class Connection extends EventEmitter {
 		on(CLOSE, new Callback() {
 			@Override
 			public void performAction(Event event) {
+				OutputInterfaceFactory f = OutputInterfaceFactory.instance();
 				//@formatter:off
 				try { mSocket.close(); } catch (Exception ignored) { } finally { mSocket = null; }
+				try { mInputThread.quit(); } catch (Exception ignored) { } finally { mInputThread = null; }
+				try { f.release(mOutputInterface); } catch (Exception ignored) { } finally {mOutputInterface = null; }
 				//@formatter:on
 
 				mCapabilities.clear();
 				mCurrentHost = null;
 				mHostCapabilities.clear();
 				mHostIrcdVersion = null;
-				mInputThread.quit();
-				mInputThread = null;
-				OutputInterfaceFactory.instance().release(mOutputInterface);
-				mOutputInterface = null;
 			}
 		});
 
