@@ -14,5 +14,8 @@
 hs_err_pid*
 
 build/
+.gradle/
+.idea/
+rice.iml
 
 
