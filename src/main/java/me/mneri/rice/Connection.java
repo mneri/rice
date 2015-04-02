@@ -453,112 +453,94 @@ public class Connection extends EventEmitter {
 
 	private void initCallbacks() {
 		// Cambi di stato
-		on(REGISTER, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				if (mAutoJoin.size() > 0) {
-					for (String channel : mAutoJoin)
-						join(channel);
+		on(REGISTER, event -> {
+			if (mAutoJoin.size() > 0) {
+				for (String channel : mAutoJoin)
+					join(channel);
 
-					mAutoJoin.clear();
-				} else {
-					for (Conversation conversation : mConversations.values()) {
-						if (conversation.getType() == Conversation.Type.CHANNEL)
-							join(conversation.getName());
-					}
+				mAutoJoin.clear();
+			} else {
+				for (Conversation conversation : mConversations.values()) {
+					if (conversation.getType() == Conversation.Type.CHANNEL)
+						join(conversation.getName());
 				}
 			}
 		});
-		on(CLOSE, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				OutputInterfaceFactory f = OutputInterfaceFactory.instance();
-				//@formatter:off
-				try { mSocket.close(); } catch (Exception ignored) { } finally { mSocket = null; }
-				try { mInputThread.quit(); } catch (Exception ignored) { } finally { mInputThread = null; }
-				try { f.release(mOutputInterface); } catch (Exception ignored) { } finally {mOutputInterface = null; }
-				//@formatter:on
+		on(CLOSE, event -> {
+			OutputInterfaceFactory f = OutputInterfaceFactory.instance();
+			//@formatter:off
+			try { mSocket.close(); } catch (Exception ignored) { } finally { mSocket = null; }
+			try { mInputThread.quit(); } catch (Exception ignored) { } finally { mInputThread = null; }
+			try { f.release(mOutputInterface); } catch (Exception ignored) { } finally {mOutputInterface = null; }
+			//@formatter:on
 
-				mCapabilities.clear();
-				mCurrentHost = null;
-				mHostCapabilities.clear();
-				mHostIrcdVersion = null;
-			}
+			mCapabilities.clear();
+			mCurrentHost = null;
+			mHostCapabilities.clear();
+			mHostIrcdVersion = null;
 		});
 
 		// Ricezione messaggi
-		on(AUTHENTICATE, new Callback() {
-			@Override
-			public void performAction(Event event) {
+		on(AUTHENTICATE, event -> {
 				String body = mWantedNick + "\0" + mUser + "\0" + mPass;
 				sendRawString("AUTHENTICATE " + new String(Base64.encodeBase64(body.getBytes())) + "\r\n");
+			});
+		on(AWAY, (Event event) -> {
+			Message message = (Message) event.data;
+
+			if (message.params.size() > 0) {
+				// TODO: User is away
+			} else {
+				// TODO: User is returned
 			}
 		});
-		on(AWAY, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
+		on(CAP, event -> {
+			Message message = (Message) event.data;
+			String sub = message.params.get(1);
 
-				if (message.params.size() > 0) {
-					// TODO: User is away
-				} else {
-					// TODO: User is returned
+			if (sub.equals("ACK")) {
+				ArrayList<String> caps = new ArrayList<>(Arrays.asList(message.params.get(2).split("\\s+")));
+
+				for (String cap : caps) {
+					if (cap.startsWith("-"))
+						mCapabilities.remove(cap.substring(1));
+					else
+						mCapabilities.add(cap.replaceAll("[-~=]", ""));
 				}
 			}
 		});
-		on(CAP, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				String sub = message.params.get(1);
+		on(CAP, event -> {
+			Message message = (Message) event.data;
+			String sub = message.params.get(1);
 
-				if (sub.equals("ACK")) {
-					ArrayList<String> caps = new ArrayList<>(Arrays.asList(message.params.get(2).split("\\s+")));
+			if (mState == State.CONNECTED) {
+				ArrayList<String> caps = new ArrayList<>(Arrays.asList(message.params.get(2).split("\\s+")));
 
-					for (String cap : caps) {
-						if (cap.startsWith("-"))
-							mCapabilities.remove(cap.substring(1));
+				switch (sub) {
+					case "ACK":
+						if (caps.contains("sasl"))
+							sendRawString("AUTHENTICATE PLAIN\r\n");
 						else
-							mCapabilities.add(cap.replaceAll("[-~=]", ""));
-					}
-				}
-			}
-		});
-		on(CAP, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				String sub = message.params.get(1);
+							cap("END");
+						break;
+					case "LS":
+						mHostCapabilities.addAll(caps);
+						HashSet<String> wanted = new HashSet<>(mWantedCapabilities);
+						wanted.retainAll(caps);
 
-				if (mState == State.CONNECTED) {
-					ArrayList<String> caps = new ArrayList<>(Arrays.asList(message.params.get(2).split("\\s+")));
+						if (TextUtils.isEmpty(mPass))
+							wanted.remove("sasl");
 
-					switch (sub) {
-						case "ACK":
-							if (caps.contains("sasl"))
-								sendRawString("AUTHENTICATE PLAIN\r\n");
-							else
-								cap("END");
-							break;
-						case "LS":
-							mHostCapabilities.addAll(caps);
-							HashSet<String> wanted = new HashSet<>(mWantedCapabilities);
-							wanted.retainAll(caps);
+						if (wanted.isEmpty()) {
+							cap("END");
+						} else {
+							StringBundler requesting = new StringBundler();
 
-							if (TextUtils.isEmpty(mPass))
-								wanted.remove("sasl");
+							for (String s : wanted)
+								requesting.append(s).append(" ");
 
-							if (wanted.isEmpty()) {
-								cap("END");
-							} else {
-								StringBundler requesting = new StringBundler();
-
-								for (String s : wanted)
-									requesting.append(s).append(" ");
-
-								cap("REQ", requesting.toString());
-							}
-					}
+							cap("REQ", requesting.toString());
+						}
 				}
 			}
 		});
@@ -571,228 +553,194 @@ public class Connection extends EventEmitter {
 					nick(mWantedNick + (++mTries));
 			}
 		});
-		on(JOIN, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				User user = mUsers.get(message.nick);
+		on(JOIN, event -> {
+			Message message = (Message) event.data;
+			User user = mUsers.get(message.nick);
 
-				if (mUser == null)
-					user = new User(message.nick, message.user, message.host);
+			if (mUser == null)
+				user = new User(message.nick, message.user, message.host);
 
-				if (mCapabilities.contains("extended-join")) {
-					user.setAccount(message.params.get(1));
-					user.setReal(message.params.get(2));
-				}
-
-				String channel = message.params.get(0);
+			if (mCapabilities.contains("extended-join")) {
+				user.setAccount(message.params.get(1));
+				user.setReal(message.params.get(2));
 			}
+
+			String channel = message.params.get(0);
 		});
-		on(MODE, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				String target = message.params.get(0);
-				String specs = message.params.get(1);
+		on(MODE, event -> {
+			Message message = (Message) event.data;
+			String target = message.params.get(0);
+			String specs = message.params.get(1);
 
-				// Ci interessa solo la nostra user mode
-				if (target.equals(mNick)) {
-					char mode;
-					boolean value = false;
+			// Ci interessa solo la nostra user mode
+			if (target.equals(mNick)) {
+				char mode;
+				boolean value = false;
 
-					for (int i = 0; i < specs.length(); i++) {
-						mode = specs.charAt(i);
+				for (int i = 0; i < specs.length(); i++) {
+					mode = specs.charAt(i);
 
-						//@formatter:off
+					//@formatter:off
 						if (mode == '+')      value = true;
 						else if (mode == '-') value = false;
 						else if (mode != ' ') mUserMode.put(mode, value);
 						//@formatter:on
-					}
 				}
 			}
 		});
-		on(NICK, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
+		on(NICK, event -> {
+			Message message = (Message) event.data;
 
-				if (TextUtils.compareIgnoreCase(mNick, message.nick, mCaseMapping) == 0)
-					mNick = message.params.get(0);
-			}
-		});
-		on(PING, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				pong(message.params.get(0));
-			}
-		});
-		on(RPL_ISUPPORT, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				Pattern pattern = Pattern.compile("Try server (.+), port (\\d+)");
-				Matcher matcher = pattern.matcher(message.params.get(1));
-				boolean isRplBounce = matcher.find();
-
-				if (isRplBounce) {
-					mIsupportCompilant = false;
-
-					try {
-						if (mAutoBounce) {
-							mHost = matcher.group(1);
-							mPort = Integer.parseInt(matcher.group(2));
-							emit(new Event(BOUNCE, this));
-							stop();
-							start();
-						}
-					} catch (Exception ignored) { }
-				} else {
-					mIsupportCompilant = true;
-					pattern = Pattern.compile("([A-Z]+)(=(\\S+))?");
-
-					for (int i = 1; i < message.params.size(); i++) {
-						matcher = pattern.matcher(message.params.get(i));
-
-						while (matcher.find()) {
-							String key = matcher.group(1);
-							String value = matcher.group(3);
-
-							try {
-								switch (key) {
-									case "CASEMAPPING":
-										if (value.equals("ascii"))
-											mCaseMapping = CaseMapping.ASCII;
-										else if (value.equals("strict-rfc1459"))
-											mCaseMapping = CaseMapping.STRICT_RFC1459;
-
-										break;
-									case "NETWORK":
-										mNetwork = value;
-										break;
-								}
-							} catch (Exception ignored) { }
-						}
-					}
-				}
-			}
-		});
-		on(RPL_MYINFO, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				mCurrentHost = message.params.get(1);
-				mHostIrcdVersion = message.params.get(2);
-				String userModes = message.params.get(3);
-				String channelModes = message.params.get(4);
-
-				for (int i = 0; i < userModes.length(); i++)
-					mUserMode.put(userModes.charAt(i), false);
-
-				for (int i = 0; i < channelModes.length(); i++)
-					mAvailChannelModes.add(channelModes.charAt(i));
-
-				mState = State.REGISTERED;
-				emit(new Event(REGISTER, this));
-			}
-		});
-		on(RPL_SASLSUCCESS, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				if (mState == State.CONNECTED)
-					cap("END");
-			}
-		});
-		on(RPL_WELCOME, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
+			if (TextUtils.compareIgnoreCase(mNick, message.nick, mCaseMapping) == 0)
 				mNick = message.params.get(0);
+		});
+		on(PING, event -> {
+			Message message = (Message) event.data;
+			pong(message.params.get(0));
+		});
+		on(RPL_ISUPPORT, event -> {
+			Message message = (Message) event.data;
+			Pattern pattern = Pattern.compile("Try server (.+), port (\\d+)");
+			Matcher matcher = pattern.matcher(message.params.get(1));
+			boolean isRplBounce = matcher.find();
+
+			if (isRplBounce) {
+				mIsupportCompilant = false;
+
+				try {
+					if (mAutoBounce) {
+						mHost = matcher.group(1);
+						mPort = Integer.parseInt(matcher.group(2));
+						emit(new Event(BOUNCE, this));
+						stop();
+						start();
+					}
+				} catch (Exception ignored) {
+				}
+			} else {
+				mIsupportCompilant = true;
+				pattern = Pattern.compile("([A-Z]+)(=(\\S+))?");
+
+				for (int i = 1; i < message.params.size(); i++) {
+					matcher = pattern.matcher(message.params.get(i));
+
+					while (matcher.find()) {
+						String key = matcher.group(1);
+						String value = matcher.group(3);
+
+						try {
+							switch (key) {
+								case "CASEMAPPING":
+									if (value.equals("ascii"))
+										mCaseMapping = CaseMapping.ASCII;
+									else if (value.equals("strict-rfc1459"))
+										mCaseMapping = CaseMapping.STRICT_RFC1459;
+
+									break;
+								case "NETWORK":
+									mNetwork = value;
+									break;
+							}
+						} catch (Exception ignored) {
+						}
+					}
+				}
 			}
+		});
+		on(RPL_MYINFO, event -> {
+			Message message = (Message) event.data;
+			mCurrentHost = message.params.get(1);
+			mHostIrcdVersion = message.params.get(2);
+			String userModes = message.params.get(3);
+			String channelModes = message.params.get(4);
+
+			for (int i = 0; i < userModes.length(); i++)
+				mUserMode.put(userModes.charAt(i), false);
+
+			for (int i = 0; i < channelModes.length(); i++)
+				mAvailChannelModes.add(channelModes.charAt(i));
+
+			mState = State.REGISTERED;
+			emit(new Event(REGISTER, this));
+		});
+		on(RPL_SASLSUCCESS, event -> {
+			if (mState == State.CONNECTED)
+				cap("END");
+		});
+		on(RPL_WELCOME, (Event event) -> {
+			Message message = (Message) event.data;
+			mNick = message.params.get(0);
 		});
 
 		// Stato delle conversazioni
-		on(JOIN, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				String target = message.params.get(0);
-				Conversation conversation = mConversations.get(target);
+		on(JOIN, event -> {
+			Message message = (Message) event.data;
+			String target = message.params.get(0);
+			Conversation conversation = mConversations.get(target);
+
+			if (conversation == null) {
+				conversation = new Conversation(target, mFactory);
+				mConversations.put(target, conversation);
+				emit(new Event(NEW_CONVERSATION, conversation));
+			}
+
+			conversation.addUser(message.nick);
+		});
+		on(new String[]{ KICK, PART }, event -> {
+			Message message = (Message) event.data;
+			String conversationName = message.params.get(0);
+			String target;
+
+			if (message.command.equals(PART))
+				target = message.nick;
+			else
+				target = message.params.get(1);
+
+			if (TextUtils.compareIgnoreCase(target, mNick, mCaseMapping) == 0) {
+				Conversation conversation = mConversations.remove(conversationName);
+				emit(new Event(REMOVE_CONVERSATION, conversation));
+			} else {
+				Conversation conversation = mConversations.get(conversationName);
 
 				if (conversation == null) {
-					conversation = new Conversation(target, mFactory);
-					mConversations.put(target, conversation);
+					conversation = new Conversation(conversationName, mFactory);
+					mConversations.put(conversationName, conversation);
 					emit(new Event(NEW_CONVERSATION, conversation));
 				}
 
-				conversation.addUser(message.nick);
-			}
-		});
-		on(new String[]{ KICK, PART }, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				String conversationName = message.params.get(0);
-				String target;
-
-				if (message.command.equals(PART))
-					target = message.nick;
-				else
-					target = message.params.get(1);
-
-				if (TextUtils.compareIgnoreCase(target, mNick, mCaseMapping) == 0) {
-					Conversation conversation = mConversations.remove(conversationName);
-					emit(new Event(REMOVE_CONVERSATION, conversation));
-				} else {
-					Conversation conversation = mConversations.get(conversationName);
-
-					if (conversation == null) {
-						conversation = new Conversation(conversationName, mFactory);
-						mConversations.put(conversationName, conversation);
-						emit(new Event(NEW_CONVERSATION, conversation));
-					}
-
-					conversation.removeUser(target);
-					conversation.putMessage(message);
-				}
-			}
-		});
-		on(new String[]{ JOIN, NOTICE, PRIVMSG }, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
-				String target = message.params.get(0);
-
-				if (message.command.equals(PRIVMSG) || message.command.equals(NOTICE)) {
-					if (mState == State.REGISTERED) {
-						if (TextUtils.compareIgnoreCase(target, mNick, mCaseMapping) == 0)
-							target = message.nick;
-					}
-				}
-
-				Conversation conversation = mConversations.get(target);
-
-				if (conversation == null) {
-					conversation = new Conversation(target, mFactory);
-					mConversations.put(target, conversation);
-					emit(new Event(NEW_CONVERSATION, conversation));
-				}
-
+				conversation.removeUser(target);
 				conversation.putMessage(message);
 			}
 		});
-		on(NICK, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
+		on(new String[]{ JOIN, NOTICE, PRIVMSG }, event -> {
+			Message message = (Message) event.data;
+			String target = message.params.get(0);
 
-				for (Conversation conversation : mConversations.values()) {
-					if (conversation.contains(message.nick)) {
-						conversation.removeUser(message.nick);
-						conversation.addUser(message.params.get(0));
-						conversation.putMessage(message);
-					}
+			if (message.command.equals(PRIVMSG) || message.command.equals(NOTICE)) {
+				if (mState == State.REGISTERED) {
+					if (TextUtils.compareIgnoreCase(target, mNick, mCaseMapping) == 0)
+						target = message.nick;
+				}
+			}
+
+			Conversation conversation = mConversations.get(target);
+
+			if (conversation == null) {
+				conversation = new Conversation(target, mFactory);
+				mConversations.put(target, conversation);
+				emit(new Event(NEW_CONVERSATION, conversation));
+			}
+
+			conversation.putMessage(message);
+		});
+		on(NICK, event -> {
+			Message message = (Message) event.data;
+
+			for (Conversation conversation : mConversations.values()) {
+				if (conversation.contains(message.nick)) {
+					conversation.removeUser(message.nick);
+					conversation.addUser(message.params.get(0));
+					conversation.putMessage(message);
 				}
 			}
 		});
@@ -827,28 +775,22 @@ public class Connection extends EventEmitter {
 				}
 			}
 		});
-		on(RPL_WHOREPLY, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
+		on(RPL_WHOREPLY, event -> {
+			Message message = (Message) event.data;
 
-				String user = message.params.get(2);
-				String host = message.params.get(3);
-				String server = message.params.get(4);
-				String nick = message.params.get(5);
-				boolean away = message.params.get(6).equals("G");
-			}
+			String user = message.params.get(2);
+			String host = message.params.get(3);
+			String server = message.params.get(4);
+			String nick = message.params.get(5);
+			boolean away = message.params.get(6).equals("G");
 		});
-		on(QUIT, new Callback() {
-			@Override
-			public void performAction(Event event) {
-				Message message = (Message) event.data;
+		on(QUIT, event -> {
+			Message message = (Message) event.data;
 
-				for (Conversation conversation : mConversations.values()) {
-					if (conversation.contains(message.nick)) {
-						conversation.removeUser(message.nick);
-						conversation.putMessage(message);
-					}
+			for (Conversation conversation : mConversations.values()) {
+				if (conversation.contains(message.nick)) {
+					conversation.removeUser(message.nick);
+					conversation.putMessage(message);
 				}
 			}
 		});
@@ -1106,43 +1048,40 @@ public class Connection extends EventEmitter {
 		mState = State.STARTED;
 		emit(new Event(START, this));
 
-		new Thread(new Runnable() {
-			@Override
-			public void run() {
-				try {
-					if (mSecure) {
-						SSLContext sslContext = SSLContext.getInstance("TLS");
-						String algorithm = TrustManagerFactory.getDefaultAlgorithm();
-						TrustManagerFactory tmFactory = TrustManagerFactory.getInstance(algorithm);
-						tmFactory.init((KeyStore) null);
-						sslContext.init(null, tmFactory.getTrustManagers(), null);
-						SSLSocketFactory sslFactory = sslContext.getSocketFactory();
-						SSLSocket sslSocket = (SSLSocket) sslFactory.createSocket(mHost, mPort);
-						sslSocket.startHandshake();
-						mSocket = sslSocket;
-					} else {
-						mSocket = new Socket(mHost, mPort);
-					}
-
-					mSocket.setSoTimeout(mSoTimeout);
-					mInputThread = new InputThread(mSocket.getInputStream(), mEncoding, new InputThreadObserver());
-					mInputThread.start();
-					OutputInterfaceFactory outFactory = OutputInterfaceFactory.instance();
-					OutputStreamWriter outWriter = new OutputStreamWriter(mSocket.getOutputStream(), mEncoding);
-					mOutputInterface = outFactory.createInterface(outWriter);
-
-					mState = State.CONNECTED;
-					emit(new Event(CONNECT, this));
-					cap("LS");
-
-					if (!TextUtils.isEmpty(mPass))
-						pass(mPass);
-
-					nick(mWantedNick);
-					user(mUser, mLoginMode, "*", mReal);
-				} catch (Exception e) {
-					onDisconnection();
+		new Thread(() -> {
+			try {
+				if (mSecure) {
+					SSLContext sslContext = SSLContext.getInstance("TLS");
+					String algorithm = TrustManagerFactory.getDefaultAlgorithm();
+					TrustManagerFactory tmFactory = TrustManagerFactory.getInstance(algorithm);
+					tmFactory.init((KeyStore) null);
+					sslContext.init(null, tmFactory.getTrustManagers(), null);
+					SSLSocketFactory sslFactory = sslContext.getSocketFactory();
+					SSLSocket sslSocket = (SSLSocket) sslFactory.createSocket(mHost, mPort);
+					sslSocket.startHandshake();
+					mSocket = sslSocket;
+				} else {
+					mSocket = new Socket(mHost, mPort);
 				}
+
+				mSocket.setSoTimeout(mSoTimeout);
+				mInputThread = new InputThread(mSocket.getInputStream(), mEncoding, new InputThreadObserver());
+				mInputThread.start();
+				OutputInterfaceFactory outFactory = OutputInterfaceFactory.instance();
+				OutputStreamWriter outWriter = new OutputStreamWriter(mSocket.getOutputStream(), mEncoding);
+				mOutputInterface = outFactory.createInterface(outWriter);
+
+				mState = State.CONNECTED;
+				emit(new Event(CONNECT, this));
+				cap("LS");
+
+				if (!TextUtils.isEmpty(mPass))
+					pass(mPass);
+
+				nick(mWantedNick);
+				user(mUser, mLoginMode, "*", mReal);
+			} catch (Exception e) {
+				onDisconnection();
 			}
 		}).start();
 	}
